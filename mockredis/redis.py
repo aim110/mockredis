@@ -2,6 +2,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from hashlib import sha1
 from operator import add
+from itertools import islice, izip
 from random import choice, sample
 import string
 
@@ -43,6 +44,17 @@ class MockRedis(object):
         return "PONG"
 
     #### Transactions Functions ####
+    def transaction(self, func, *watches, **kwargs):
+        """
+        Convenience method for executing the callable `func` as a transaction
+        while watching all keys specified in `watches`. The 'func' callable
+        should expect a single arguement which is a Pipeline object.
+        """
+        value_from_callable = kwargs.pop('value_from_callable', False)
+        with self.pipeline(True) as pipe:
+            func_value = func(pipe)
+            exec_value = pipe.execute()
+            return func_value if value_from_callable else exec_value
 
     def lock(self, key, timeout=0, sleep=0):
         """Emulate lock."""
@@ -107,6 +119,22 @@ class MockRedis(object):
         result = [key for key in self.redis.keys() if re.match(regex, key)]
 
         return result
+
+    def execute_command(self, *args, **options):
+        command_name = args[0].lower()
+        command_args = args[1:]
+
+        command = getattr(self, command_name)
+        if not callable(command):
+            raise AttributeError(command_name)
+        if command_name == 'hmset':
+            key = command_args[0]
+            values = command_args[1:]
+            val_len = len(values)
+            hmset_val = dict(izip(islice(values, 0, val_len, 2), islice(values, 1, val_len, 2)))
+            return command(key, hmset_val)
+        else:
+            return command(*command_args)
 
     def delete(self, *keys):
         """Emulate delete."""
